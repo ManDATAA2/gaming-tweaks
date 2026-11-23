@@ -1,62 +1,157 @@
-name: Custom Vanilla Desktop # Replace this name with your image name
-id: custom # Replace this ID with your image ID
+name: Vanilla GNOME
+id: gnome
 vibversion: 1.1.0
 
 stages:
 - id: build
-  base: ghcr.io/vanilla-os/gnome:latest # Optionally, Replace this image URL with a different one i.e. gnome-nvidia:latest, etc
+  base: ghcr.io/vanilla-os/core:latest
   addincludes: true
   singlelayer: false
   labels:
-    maintainer: self-maintained # Optionally, Replace this with your name
+    maintainer: Vanilla OS Contributors
   args:
-    DEBIAN_FRONTEND: noninteractive # Set the image environment as non-interactive
-  cleanup:
-    - /tmp/*
-    - /var/tmp/*
+    DEBIAN_FRONTEND: noninteractive
 
-  # Commands to run first before building the modules
   runs:
     commands:
       - echo 'APT::Install-Recommends "1";' > /etc/apt/apt.conf.d/01norecommends
+  cleanup:
+    - /boot/initrd.img*
+    - /tmp/*
+    - /var/cache/apt/pkgcache.bin
+    - /var/cache/debconf
+    - /var/cache/dictionaries-common
+    - /var/cache/fontconfig
+    - /var/cache/ldconfig
+    - /var/cache/man
+    - /var/lib/dbus/machine-id
+    - /var/log/*
 
   modules:
   - name: init-setup
     type: shell
     commands:
-    - lpkg --unlock
-    - apt-get update
+    - echo 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"' > /etc/environment
+    - sed -i '4,10d' /etc/profile
+    - apt update
+    - apt clean
+    - apt-mark hold snapd gnome-software-plugin-snap
+    - apt -y install squashfs-tools minisign
 
-  # Put your custom actions below this comment
+  - name: vanilla-tools
+    type: shell
+    sources:
+      - type: tar
+        url: https://github.com/Vanilla-OS/vanilla-tools/releases/download/v1.0.1/vanilla-tools-amd64.tar.gz
+        checksum: aef32f07820e0993e534e6bccfa1a6daae6c8c6f0543d3e073f4f121f2ef2e31
+        only-arches: [amd64]
+      - type: tar
+        url: https://github.com/Vanilla-OS/vanilla-tools/releases/download/v1.0.1/vanilla-tools-arm64.tar.gz
+        checksum: e59b098338de6f6071376e07ec79b17be6c8f0a0dd354fab128e1e86a36d0862
+        only-arches: [arm64]
+    commands:
+    - mkdir -p /usr/bin
+    - cp /sources/vanilla-tools/vanilla-tools*/vanilla-tools/lpkg /usr/bin/lpkg
+    - cp /sources/vanilla-tools/vanilla-tools*/vanilla-tools/cur-gpu /usr/bin/cur-gpu
+    - chmod +x /usr/bin/lpkg
+    - chmod +x /usr/bin/cur-gpu
 
-  - name: example-packages # Sample module using the built-in Apt module to install packages
+  - name: packages-modules
+    type: includes
+    includes:
+      - modules/00-vanilla-desktop-base.yml
+      - modules/00-vanilla-backgrounds.yml
+      - modules/00-vanilla-first-setup.yml
+      - modules/00-vanilla-gnome-default-settings.yml
+      - modules/00-vanilla-system-operator.yml
+      - modules/00-vanilla-apx-wrapper.yml
+      - modules/00-vanilla-tour.yml
+      - modules/00-vanilla-sideload.yml
+      - modules/00-vanilla-updates-utility.yml
+      - modules/00-vanilla-prime-utility.yml
+      - modules/00-vanilla-migration.yml
+      - modules/03-fswarn.yml
+      - modules/10-vanilla-abroot-rollback-notifier.yml
+      - modules/15-gnome-essentials.yml
+      - modules/18-libs-extra.yml
+      - modules/21-gnome-control-center.yml
+      - modules/35-nautilus-terminal-rightclick.yml
+      - modules/40-gnome-appearance.yml
+      - modules/50-laptop-goodies.yml
+      - modules/60-media.yml
+      - modules/80-printers.yml
+      - modules/100-accessibility.yml
+      - modules/110-fonts.yml
+      - modules/120-network.yml
+      - modules/121-disable-ssh-daemon.yml
+      - modules/130-plymouth.yml
+      - modules/131-plymouth-theme-vanilla.yml
+      - modules/140-password.yml
+      - modules/160-utilities.yml
+      - modules/170-gnome-software-vso-plugin.yml
+      - modules/997-misc-setup.yml
+      - modules/999-cleanup.yml
+
+  # Steam installer omitted because it requires i386.
+  - name: gaming-packages
     type: apt
     sources:
       - packages:
-        - vim
+          - mangohud
+          - gamemode
+          - systemd-zram-generator
 
-  - name: example-commands # Sample module demonstrating the Shell module with custom commands
+  - name: gaming-tweaks
     type: shell
     commands:
-    - echo Example output
+    # NTsync
+    - mkdir -p /etc/modules-load.d
+    - printf '%s\n' ntsync > /etc/modules-load.d/ntsync.conf
 
-  - name: example-modules # Sample module demonstrating importing local and remote modules
-    type: includes
-    includes:
-      - modules/50-install-debs.yml # Sample local module present in this repository
-      # - gh:vanilla-os/dev-image:main:modules/00-basics.yml # Sample GitHub remote module in the format: `gh:your-name/your-repo:branch:modules/file.yml`
-      # - https://raw.githubusercontent.com/Vanilla-OS/dev-image/main/modules/05-go.yml # Sample full URL remote module
+    # ZRAM: half of physical RAM, capped at 8 GiB (handled by zram-generator)
+    - mkdir -p /etc/systemd
+    - printf '[zram0]\nzram-size = min(ram / 2, 8192)\ncompression-algorithm = zstd(level=3)\n' > /etc/systemd/zram-generator.conf
 
-  # Put your custom actions above this comment
+    # Disable zram-tools (zramswap.service): it conflicts with zram-generator
+    # over /dev/zram0 and fails at boot.
+    - mkdir -p /etc/systemd/system
+    - ln -sf /dev/null /etc/systemd/system/zramswap.service
 
-  - name: set-image-name-abroot
-    type: includes
-    includes:
-      - modules/80-set-image-abroot-config.yml
+    # GameMode group
+    - systemd-sysusers
+    - if ! getent group gamemode >/dev/null 2>&1; then groupadd --system gamemode; fi
 
-  - name: cleanup
+    # Script to add desktop users to GameMode group.
+    # NOTE: lives in /usr/lib, NOT /usr/local, because ABRoot mounts /usr/local
+    # at runtime and anything written there during the build is hidden.
+    - mkdir -p /usr/lib/vanilla-gamemode
+    - "printf '%s\\n' '#!/bin/sh' 'set -eu' 'getent passwd | while IFS=: read -r user _ uid _ _ home _; do' '  case \"$home\" in' '    /home/*) ;;' '    *) continue ;;' '  esac' '  if [ \"$uid\" -ge 1000 ] && [ \"$uid\" -lt 60000 ]; then' '    /usr/sbin/usermod --append --groups gamemode \"$user\"' '  fi' 'done' > /usr/lib/vanilla-gamemode/add-users"
+    - chmod 0755 /usr/lib/vanilla-gamemode/add-users
+    - test -x /usr/lib/vanilla-gamemode/add-users
+
+    # GameMode service
+    - 'printf "%s\n" "[Unit]" "Description=Add desktop users to GameMode group" "After=systemd-sysusers.service" "Wants=systemd-sysusers.service" "" "[Service]" "Type=oneshot" "ExecStart=/usr/lib/vanilla-gamemode/add-users" "" "[Install]" "WantedBy=multi-user.target" > /usr/lib/systemd/system/gamemode-add-users.service'
+
+    # Btrfs compression service
+    - 'printf "%s\n" "[Unit]" "Description=Enable Btrfs Zstandard level 3 compression on /var" "After=local-fs.target" "RequiresMountsFor=/var" "ConditionPathIsMountPoint=/var" "" "[Service]" "Type=oneshot" "ExecStart=/usr/bin/mount -o remount,compress=zstd:3 /var" "RemainAfterExit=yes" "" "[Install]" "WantedBy=multi-user.target" > /usr/lib/systemd/system/btrfs-compress.service'
+
+    # Enable services
+    - mkdir -p /usr/lib/systemd/system/multi-user.target.wants
+    - ln -sf ../gamemode-add-users.service /usr/lib/systemd/system/multi-user.target.wants/gamemode-add-users.service
+    - ln -sf ../btrfs-compress.service /usr/lib/systemd/system/multi-user.target.wants/btrfs-compress.service
+
+  - name: cleanup-and-sysconf-setup
     type: shell
     commands:
-    - apt-get autoremove -y
-    - apt-get clean
+    - apt autoremove -y
+    - apt clean
     - lpkg --lock
+    - rsync -a /etc/ /sysconf/
+    cleanup:
+    - /sysconf/resolv.conf
+
+- id: initrd
+  base: build
+  runs:
+    commands:
+      - touch $(readlink -f /initrd.img)
