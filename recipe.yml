@@ -1,3 +1,4 @@
+
 name: Vanilla GNOME
 id: gnome
 vibversion: 1.1.0
@@ -108,9 +109,9 @@ stages:
     - mkdir -p /etc/modules-load.d
     - printf '%s\n' ntsync > /etc/modules-load.d/ntsync.conf
 
-    # ZRAM
+    # ZRAM: half of physical RAM, capped at 8 GiB
     - mkdir -p /etc/systemd
-    - printf '[zram0]\ncompression-algorithm = zstd(level=3)\n' > /etc/systemd/zram-generator.conf
+    - printf '[zram0]\nzram-size = min(ram / 2, 8192)\ncompression-algorithm = zstd(level=3)\n' > /etc/systemd/zram-generator.conf
 
     # GameMode group
     - systemd-sysusers
@@ -118,8 +119,9 @@ stages:
 
     # Script to add desktop users to GameMode group
     - mkdir -p /usr/local/libexec
-    - 'printf "%s\n" "#!/bin/sh" "set -eu" "getent passwd | while IFS=: read -r user _ uid _ _ home _; do" "  if [ \"$uid\" -ge 1000 ] && [ \"$uid\" -lt 60000 ] && [ \"${home#/home/}\" != \"$home\" ]; then" "    /usr/sbin/usermod --append --groups gamemode \"$user\"" "  fi" "done" > /usr/local/libexec/vanilla-gamemode-add-users'
+    - "printf '%s\\n' '#!/bin/sh' 'set -eu' 'getent passwd | while IFS=: read -r user _ uid _ _ home _; do' '  case \"$home\" in' '    /home/*) ;;' '    *) continue ;;' '  esac' '  if [ \"$uid\" -ge 1000 ] && [ \"$uid\" -lt 60000 ]; then' '    /usr/sbin/usermod --append --groups gamemode \"$user\"' '  fi' 'done' > /usr/local/libexec/vanilla-gamemode-add-users"
     - chmod 0755 /usr/local/libexec/vanilla-gamemode-add-users
+    - test -x /usr/local/libexec/vanilla-gamemode-add-users
 
     # GameMode service
     - 'printf "%s\n" "[Unit]" "Description=Add desktop users to GameMode group" "After=systemd-sysusers.service" "Wants=systemd-sysusers.service" "" "[Service]" "Type=oneshot" "ExecStart=/usr/local/libexec/vanilla-gamemode-add-users" "" "[Install]" "WantedBy=multi-user.target" > /usr/lib/systemd/system/gamemode-add-users.service'
@@ -147,3 +149,4 @@ stages:
   runs:
     commands:
       - touch $(readlink -f /initrd.img)
+
