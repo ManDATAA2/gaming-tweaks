@@ -70,7 +70,7 @@ jobs:
 
       - name: Download previous digest
         if: ${{ steps.last_run.outputs.run_id != '' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: digest
