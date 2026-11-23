@@ -149,4 +149,3 @@ stages:
   runs:
     commands:
       - touch $(readlink -f /initrd.img)
-
