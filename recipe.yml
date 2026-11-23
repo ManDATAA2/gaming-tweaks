@@ -1,4 +1,3 @@
-
 name: Vanilla GNOME
 id: gnome
 vibversion: 1.1.0
@@ -109,22 +108,29 @@ stages:
     - mkdir -p /etc/modules-load.d
     - printf '%s\n' ntsync > /etc/modules-load.d/ntsync.conf
 
-    # ZRAM: half of physical RAM, capped at 8 GiB
+    # ZRAM: half of physical RAM, capped at 8 GiB (handled by zram-generator)
     - mkdir -p /etc/systemd
     - printf '[zram0]\nzram-size = min(ram / 2, 8192)\ncompression-algorithm = zstd(level=3)\n' > /etc/systemd/zram-generator.conf
+
+    # Disable zram-tools (zramswap.service): it conflicts with zram-generator
+    # over /dev/zram0 and fails at boot.
+    - mkdir -p /etc/systemd/system
+    - ln -sf /dev/null /etc/systemd/system/zramswap.service
 
     # GameMode group
     - systemd-sysusers
     - if ! getent group gamemode >/dev/null 2>&1; then groupadd --system gamemode; fi
 
-    # Script to add desktop users to GameMode group
-    - mkdir -p /usr/local/libexec
-    - "printf '%s\\n' '#!/bin/sh' 'set -eu' 'getent passwd | while IFS=: read -r user _ uid _ _ home _; do' '  case \"$home\" in' '    /home/*) ;;' '    *) continue ;;' '  esac' '  if [ \"$uid\" -ge 1000 ] && [ \"$uid\" -lt 60000 ]; then' '    /usr/sbin/usermod --append --groups gamemode \"$user\"' '  fi' 'done' > /usr/local/libexec/vanilla-gamemode-add-users"
-    - chmod 0755 /usr/local/libexec/vanilla-gamemode-add-users
-    - test -x /usr/local/libexec/vanilla-gamemode-add-users
+    # Script to add desktop users to GameMode group.
+    # NOTE: lives in /usr/lib, NOT /usr/local, because ABRoot mounts /usr/local
+    # at runtime and anything written there during the build is hidden.
+    - mkdir -p /usr/lib/vanilla-gamemode
+    - "printf '%s\\n' '#!/bin/sh' 'set -eu' 'getent passwd | while IFS=: read -r user _ uid _ _ home _; do' '  case \"$home\" in' '    /home/*) ;;' '    *) continue ;;' '  esac' '  if [ \"$uid\" -ge 1000 ] && [ \"$uid\" -lt 60000 ]; then' '    /usr/sbin/usermod --append --groups gamemode \"$user\"' '  fi' 'done' > /usr/lib/vanilla-gamemode/add-users"
+    - chmod 0755 /usr/lib/vanilla-gamemode/add-users
+    - test -x /usr/lib/vanilla-gamemode/add-users
 
     # GameMode service
-    - 'printf "%s\n" "[Unit]" "Description=Add desktop users to GameMode group" "After=systemd-sysusers.service" "Wants=systemd-sysusers.service" "" "[Service]" "Type=oneshot" "ExecStart=/usr/local/libexec/vanilla-gamemode-add-users" "" "[Install]" "WantedBy=multi-user.target" > /usr/lib/systemd/system/gamemode-add-users.service'
+    - 'printf "%s\n" "[Unit]" "Description=Add desktop users to GameMode group" "After=systemd-sysusers.service" "Wants=systemd-sysusers.service" "" "[Service]" "Type=oneshot" "ExecStart=/usr/lib/vanilla-gamemode/add-users" "" "[Install]" "WantedBy=multi-user.target" > /usr/lib/systemd/system/gamemode-add-users.service'
 
     # Btrfs compression service
     - 'printf "%s\n" "[Unit]" "Description=Enable Btrfs Zstandard level 3 compression on /var" "After=local-fs.target" "RequiresMountsFor=/var" "ConditionPathIsMountPoint=/var" "" "[Service]" "Type=oneshot" "ExecStart=/usr/bin/mount -o remount,compress=zstd:3 /var" "RemainAfterExit=yes" "" "[Install]" "WantedBy=multi-user.target" > /usr/lib/systemd/system/btrfs-compress.service'
