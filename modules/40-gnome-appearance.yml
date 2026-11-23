@@ -1,0 +1,7 @@
+name: gnome-appearance
+type: apt
+sources:
+  - packages:
+    - gnome-accessibility-themes
+    - gnome-backgrounds
+    - gnome-themes-extra
